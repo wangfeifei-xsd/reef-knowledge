@@ -78,6 +78,14 @@ jobs:
             src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
           if-no-files-found: warn
 
+  # 未配置签名密钥时，Gradle 产出多为 *unsigned*.apk，部分厂商（vivo 等）会提示「软件包无效 / 缺乏开发者证书」。
+  # 在仓库 Settings → Secrets and variables → Actions 中配置：
+  #   ANDROID_KEYSTORE_BASE64  —— base64 编码的 .jks / .keystore 文件
+  #   ANDROID_KEYSTORE_PASSWORD —— 密钥库密码
+  #   ANDROID_KEY_ALIAS        —— keytool -alias
+  #   ANDROID_KEY_PASSWORD      —— 密钥密码（可与库密码相同；不配置则默认等于 ANDROID_KEYSTORE_PASSWORD）
+  # 本地生成密钥：keytool -genkey -v -keystore release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias 你的别名
+  # 编码：base64 -i release.jks | pbcopy   （Linux: base64 -w0 release.jks）
   android:
     runs-on: ubuntu-24.04
     steps:
@@ -122,9 +130,53 @@ jobs:
       - name: Build APK
         run: npx tauri android build --apk
 
+      - name: Sign release APK (供 vivo 等侧载安装)
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEY_PASS="${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > /tmp/reef-release.keystore
+          BUILD_TOOLS="${ANDROID_HOME}/build-tools/35.0.0"
+          UNSIGNED=$(find src-tauri/gen/android/app/build/outputs/apk -type f \( -name '*-unsigned.apk' -o -name '*unsigned*.apk' \) | head -1)
+          if [ -z "${UNSIGNED}" ] || [ ! -f "${UNSIGNED}" ]; then
+            echo "未找到 unsigned APK，当前 outputs："
+            find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' 2>/dev/null || true
+            exit 1
+          fi
+          ALIGNED="/tmp/aligned.apk"
+          SIGNED="/tmp/海洋知识库-signed.apk"
+          "${BUILD_TOOLS}/zipalign" -f -p 4 "${UNSIGNED}" "${ALIGNED}"
+          "${BUILD_TOOLS}/apksigner" sign \
+            --ks /tmp/reef-release.keystore \
+            --ks-pass "pass:${ANDROID_KEYSTORE_PASSWORD}" \
+            --ks-key-alias "${ANDROID_KEY_ALIAS}" \
+            --key-pass "pass:${KEY_PASS}" \
+            --out "${SIGNED}" \
+            "${ALIGNED}"
+          "${BUILD_TOOLS}/apksigner" verify --print-certs "${SIGNED}"
+          rm -f /tmp/reef-release.keystore "${ALIGNED}"
+          mkdir -p src-tauri/gen/android/app/build/outputs/apk/signed-for-artifact
+          cp -f "${SIGNED}" src-tauri/gen/android/app/build/outputs/apk/signed-for-artifact/
+
+      - name: 汇总待上传的 APK
+        run: |
+          mkdir -p out-apk
+          shopt -s nullglob
+          if compgen -G "src-tauri/gen/android/app/build/outputs/apk/signed-for-artifact/*.apk" > /dev/null; then
+            cp -f src-tauri/gen/android/app/build/outputs/apk/signed-for-artifact/*.apk out-apk/
+          else
+            find src-tauri/gen/android/app/build/outputs/apk -type f -path '*/release/*' -name '*.apk' -exec cp -f {} out-apk/ \;
+          fi
+          ls -la out-apk/
+
       - name: Upload Android APK
         uses: actions/upload-artifact@v5
         with:
           name: android-apk
-          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          path: out-apk/*.apk
           if-no-files-found: warn
