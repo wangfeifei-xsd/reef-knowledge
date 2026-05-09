@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+# IDE
+.idea
+.vscode
+.DS_Store
+
+# Tauri
+src-tauri/target
+
+# Env
+.env
+.env.local
