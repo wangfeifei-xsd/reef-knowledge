@@ -25,12 +25,6 @@
 
     /* 让 tdesign Navbar 顶部留出状态栏（刘海/灵动岛）安全区 */
     --td-navbar-padding-top: env(safe-area-inset-top, 0px);
-
-    /* 由 JS 监听 visualViewport 写入：可视高度（键盘弹起后会同步缩小）。
-       默认回退到 100dvh（动态视口高度）。 */
-    --app-vh: 100dvh;
-    /* 键盘高度：visualViewport 与 layout viewport 之差；JS 中维护，默认 0 */
-    --keyboard-height: 0px;
   }
   .dark {
     --background: 240 10% 3.9%;
