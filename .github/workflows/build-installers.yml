@@ -36,14 +36,13 @@ jobs:
       - name: Build Tauri (Windows)
         run: npm run tauri:build
 
+      # Windows 仅构建 NSIS（见 tauri.windows.conf.json），避免 WiX light.exe 与中文 productName 在 CI 上失败。
       - name: Upload Windows bundles
         uses: actions/upload-artifact@v5
         with:
           name: windows-installers
-          path: |
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/nsis/*.exe
-          if-no-files-found: warn
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
 
   macos-apple-silicon:
     runs-on: macos-14
@@ -78,14 +77,9 @@ jobs:
             src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
           if-no-files-found: warn
 
-  # 未配置签名密钥时，Gradle 产出多为 *unsigned*.apk，部分厂商（vivo 等）会提示「软件包无效 / 缺乏开发者证书」。
-  # 在仓库 Settings → Secrets and variables → Actions 中配置：
-  #   ANDROID_KEYSTORE_BASE64  —— base64 编码的 .jks / .keystore 文件
-  #   ANDROID_KEYSTORE_PASSWORD —— 密钥库密码
-  #   ANDROID_KEY_ALIAS        —— keytool -alias
-  #   ANDROID_KEY_PASSWORD      —— 密钥密码（可与库密码相同；不配置则默认等于 ANDROID_KEYSTORE_PASSWORD）
-  # 本地生成密钥：keytool -genkey -v -keystore release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias 你的别名
-  # 编码：base64 -i release.jks | pbcopy   （Linux: base64 -w0 release.jks）
+  # 未配置 release 密钥时，CI 会用标准 Android debug 密钥（android/androiddebugkey）对 APK 签名，多数厂商比「完全未签名」更易安装。
+  # 正式发版建议在 Secrets 中配置：
+  #   ANDROID_KEYSTORE_BASE64、ANDROID_KEYSTORE_PASSWORD、ANDROID_KEY_ALIAS、[ANDROID_KEY_PASSWORD]
   android:
     runs-on: ubuntu-24.04
     steps:
@@ -131,7 +125,7 @@ jobs:
         run: npx tauri android build --apk
 
       # 注意：不能在步骤 if 中使用 secrets.*（GitHub 会报 Invalid workflow）。改为在脚本里判断 env 是否为空。
-      - name: Sign release APK (供 vivo 等侧载安装)
+      - name: Sign APK（release 密钥或标准 debug 密钥）
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -139,12 +133,6 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
-            echo "::notice::未配置 ANDROID_KEYSTORE_BASE64，跳过签名（未签名 APK 在部分厂商机上可能无法安装）。"
-            exit 0
-          fi
-          KEY_PASS="${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > /tmp/reef-release.keystore
           BUILD_TOOLS="${ANDROID_HOME}/build-tools/35.0.0"
           UNSIGNED=$(find src-tauri/gen/android/app/build/outputs/apk -type f \( -name '*-unsigned.apk' -o -name '*unsigned*.apk' \) | head -1)
           if [ -z "${UNSIGNED}" ] || [ ! -f "${UNSIGNED}" ]; then
@@ -152,18 +140,42 @@ jobs:
             find src-tauri/gen/android/app/build/outputs/apk -type f -name '*.apk' 2>/dev/null || true
             exit 1
           fi
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "使用仓库 Secrets 中的 release 密钥签名。"
+            KEY_PASS="${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > /tmp/sign.keystore
+            KS_PASS="${ANDROID_KEYSTORE_PASSWORD}"
+            ALIAS="${ANDROID_KEY_ALIAS}"
+          else
+            echo "::notice::未配置 ANDROID_KEYSTORE_BASE64，使用标准 Android debug 密钥签名（android / androiddebugkey）。"
+            keytool -genkeypair -v \
+              -keystore /tmp/sign.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US" \
+              -noprompt
+            KS_PASS=android
+            KEY_PASS=android
+            ALIAS=androiddebugkey
+          fi
           ALIGNED="/tmp/aligned.apk"
-          SIGNED="/tmp/海洋知识库-signed.apk"
+          SIGNED="/tmp/reef-signed.apk"
           "${BUILD_TOOLS}/zipalign" -f -p 4 "${UNSIGNED}" "${ALIGNED}"
           "${BUILD_TOOLS}/apksigner" sign \
-            --ks /tmp/reef-release.keystore \
-            --ks-pass "pass:${ANDROID_KEYSTORE_PASSWORD}" \
-            --ks-key-alias "${ANDROID_KEY_ALIAS}" \
+            --ks /tmp/sign.keystore \
+            --ks-pass "pass:${KS_PASS}" \
+            --ks-key-alias "${ALIAS}" \
             --key-pass "pass:${KEY_PASS}" \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
             --out "${SIGNED}" \
             "${ALIGNED}"
           "${BUILD_TOOLS}/apksigner" verify --print-certs "${SIGNED}"
-          rm -f /tmp/reef-release.keystore "${ALIGNED}"
+          rm -f /tmp/sign.keystore "${ALIGNED}"
           mkdir -p src-tauri/gen/android/app/build/outputs/apk/signed-for-artifact
           cp -f "${SIGNED}" src-tauri/gen/android/app/build/outputs/apk/signed-for-artifact/
 

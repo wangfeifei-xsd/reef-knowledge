@@ -1,6 +1,6 @@
 //! 首次启动时若 `wiki/` 下无 Markdown，则从内置资源或开发目录拷贝默认 wiki。
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tauri::path::BaseDirectory;
 use tauri::App;
@@ -67,7 +67,7 @@ pub fn seed_default_wiki_if_empty(app: &App, data_root: &Path) -> std::io::Resul
 
         #[cfg(debug_assertions)]
         {
-            let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            let dev = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("..")
                 .join("data")
                 .join("wiki");
