@@ -130,8 +130,8 @@ jobs:
       - name: Build APK
         run: npx tauri android build --apk
 
+      # 注意：不能在步骤 if 中使用 secrets.*（GitHub 会报 Invalid workflow）。改为在脚本里判断 env 是否为空。
       - name: Sign release APK (供 vivo 等侧载安装)
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -139,6 +139,10 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "::notice::未配置 ANDROID_KEYSTORE_BASE64，跳过签名（未签名 APK 在部分厂商机上可能无法安装）。"
+            exit 0
+          fi
           KEY_PASS="${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > /tmp/reef-release.keystore
           BUILD_TOOLS="${ANDROID_HOME}/build-tools/35.0.0"
