@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "海洋知识库",
+  "productName": "REEF-CC",
   "version": "0.1.0",
   "identifier": "com.reef.knowledge",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "海洋知识库",
+        "title": "REEF-CC",
         "width": 1280,
         "height": 800,
         "minWidth": 960,

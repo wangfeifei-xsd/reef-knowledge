@@ -78,6 +78,9 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<DialogueChatTurn[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatSending, setChatSending] = useState(false);
+  // 软键盘是否弹起：由 textarea focus/blur 事件 + visualViewport 综合判断。
+  // 用于在键盘弹起时把输入条切换为 fixed 浮动模式 + 隐藏 TabBar，避免遮挡。
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
 
   const [modelGatePassword, setModelGatePassword] = useState("");
 
@@ -145,14 +148,15 @@ export default function App() {
     [],
   );
 
+  // Navbar 仅在设置子路由显示，根页面（home / chat / settings root）已隐藏标题栏。
   const navTitle = useMemo(() => {
-    if (tab !== "settings") return tab === "home" ? "海洋知识库" : "检疫神克隆体";
-    if (settingsRoute === "root") return "设置";
+    if (tab !== "settings") return "";
     if (settingsRoute === "model-config-gate") return "模型配置";
     if (settingsRoute === "model-config") return "模型配置";
     if (settingsRoute === "llm") return "LLM 模型配置";
     if (settingsRoute === "rerank") return "Rerank 模型配置";
-    return "Embedding 模型配置";
+    if (settingsRoute === "embedding") return "Embedding 模型配置";
+    return "";
   }, [tab, settingsRoute]);
 
   const showBack = tab === "settings" && settingsRoute !== "root";
@@ -303,9 +307,9 @@ export default function App() {
   }, [chatInput, chatMessages, chatSending]);
 
   const renderChat = () => (
-    // 高度交给外层（基于 visualViewport 同步 var(--app-vh)），自身用 flex 自适应
-    <div className="flex h-full min-h-0 flex-col px-3 pt-2">
-      <div className="mb-2 flex shrink-0 justify-end">
+    // 仅渲染消息列表和顶部工具条；输入条由外层渲染，避免在 keyboard 状态切换时 textarea 卸载丢失焦点。
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="mb-2 flex shrink-0 justify-end px-3 pt-2">
         <Button
           size="small"
           variant="outline"
@@ -315,7 +319,7 @@ export default function App() {
           清空对话
         </Button>
       </div>
-      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-2">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 pb-2">
         {chatMessages.length === 0 ? (
           <p className="px-1 py-10 text-center text-sm text-gray-500">
             本页为「检疫神 · Chasel」的蒸馏体，请在下方输入问题。
@@ -339,20 +343,43 @@ export default function App() {
           ))
         )}
       </div>
-      <div className="shrink-0 border-t border-gray-200 pt-2 pb-1 dark:border-zinc-700">
+    </div>
+  );
+
+  // 始终渲染在 App 根的同一位置，仅通过 className 在键盘弹起/收起时切换 fixed/relative。
+  // 这样 textarea 不会卸载重建，focus 能持续保留，键盘不会被意外收起。
+  const renderChatInputBar = () => (
+    <div
+      className={
+        keyboardOpen
+          ? "fixed inset-x-0 bottom-0 z-40 flex items-end gap-2 border-t border-gray-200 bg-background px-3 py-2 dark:border-zinc-700"
+          : "flex shrink-0 items-end gap-2 border-t border-gray-200 bg-background px-3 py-2 dark:border-zinc-700"
+      }
+      style={
+        keyboardOpen
+          ? { paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.5rem)" }
+          : undefined
+      }
+    >
+      <div className="min-w-0 flex-1">
         <Textarea
-          autosize={{ minRows: 1, maxRows: 5 }}
+          autosize={{ minRows: 1, maxRows: 3 }}
           placeholder="输入问题…"
           value={chatInput}
           disabled={chatSending}
           onChange={(v) => setChatInput(String(v))}
+          onFocus={() => setKeyboardOpen(true)}
+          onBlur={() => setKeyboardOpen(false)}
         />
-        <div className="mt-2">
-          <Button block theme="primary" loading={chatSending} disabled={!chatInput.trim()} onClick={() => void sendChat()}>
-            发送
-          </Button>
-        </div>
       </div>
+      <Button
+        theme="primary"
+        loading={chatSending}
+        disabled={!chatInput.trim()}
+        onClick={() => void sendChat()}
+      >
+        发送
+      </Button>
     </div>
   );
 
@@ -669,14 +696,27 @@ export default function App() {
       ? "min-h-0 flex-1 overflow-hidden"
       : "min-h-0 flex-1 overflow-y-auto overflow-x-hidden";
 
+  // 仅在设置子路由显示 Navbar（保留"返回"功能）；
+  // 根页面（首页 / 问答 / 设置首页）取消 Navbar 与标题，界面更清爽。
+  const showNavbar = showBack;
+
+  // 键盘弹起时隐藏 TabBar，让位给浮动输入条；其余情况正常显示。
+  const showTabBar = !(tab === "chat" && keyboardOpen);
+
   return (
-    // 外层高度跟随可视区域：默认 100dvh，被 JS 写入的 --app-vh（visualViewport.height）覆盖；
-    // 这样在手机上软键盘弹起时整体收缩，TabBar 与聊天输入框始终可见、不被遮挡。
+    // 外层高度跟随可视区域：默认 100dvh，由 JS 写入的 --app-vh 覆盖（部分 Android WebView 不更新，
+    // 此时回退到 100dvh 也能保证非聊天页正常显示）。
     <div
       className="mx-auto flex w-full flex-col bg-background md:max-w-3xl md:border-x"
-      style={{ height: "var(--app-vh, 100dvh)" }}
+      style={{
+        height: "var(--app-vh, 100dvh)",
+        // 没有 Navbar 时改由外层留出顶部安全区，避免内容顶到状态栏（刘海/灵动岛）
+        paddingTop: showNavbar ? undefined : "env(safe-area-inset-top, 0px)",
+      }}
     >
-      <Navbar title={navTitle} leftArrow={showBack} onLeftClick={onBack} />
+      {showNavbar ? (
+        <Navbar title={navTitle} leftArrow={showBack} onLeftClick={onBack} />
+      ) : null}
       <div className={middleAreaClass}>
         {tab === "home" ? renderHome() : null}
         {tab === "chat" ? renderChat() : null}
@@ -690,20 +730,27 @@ export default function App() {
           </>
         ) : null}
       </div>
-      {/* 底部 TabBar 进入正常文档流，避免 fixed 在键盘弹起时与输入框重叠；
-          下方留出 iOS Home Indicator / Android 手势条安全区 */}
-      <div
-        className="shrink-0 bg-background/95 backdrop-blur"
-        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
-      >
-        <TabBar value={tab} onChange={(v) => setTab(v as TabKey)}>
-          {tabItems.map((item) => (
-            <TabBarItem key={item.key} value={item.key} icon={item.icon}>
-              {item.label}
-            </TabBarItem>
-          ))}
-        </TabBar>
-      </div>
+      {/* 聊天输入条始终挂在 App 根的此处（保持 textarea DOM 不被卸载，焦点不丢失）。
+          - 默认：作为 flex 普通元素位于 TabBar 上方
+          - 键盘弹起：通过 className 切换为 `fixed inset-x-0 bottom-0`
+            借助 Android Manifest 的 windowSoftInputMode="adjustResize"（见
+            scripts/patch_android_manifest.py），fixed 元素会自动停在键盘上方。 */}
+      {tab === "chat" ? renderChatInputBar() : null}
+      {/* 底部 TabBar 进入正常文档流；键盘弹起时隐藏，避免与浮动输入条争夺空间 */}
+      {showTabBar ? (
+        <div
+          className="shrink-0 bg-background/95 backdrop-blur"
+          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        >
+          <TabBar value={tab} onChange={(v) => setTab(v as TabKey)}>
+            {tabItems.map((item) => (
+              <TabBarItem key={item.key} value={item.key} icon={item.icon}>
+                {item.label}
+              </TabBarItem>
+            ))}
+          </TabBar>
+        </div>
+      ) : null}
     </div>
   );
 }

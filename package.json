@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "android:patch": "python3 scripts/patch_android_manifest.py"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.2",
