@@ -108,6 +108,34 @@ export default function App() {
     void refresh();
   }, [refresh]);
 
+  // 监听 visualViewport 同步可视区域高度与软键盘高度，写入 CSS 变量；
+  // 让聊天页等使用 var(--app-vh) 计算高度，避免键盘弹出时遮挡输入框/页面内容。
+  useEffect(() => {
+    const root = document.documentElement;
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    const updateVv = () => {
+      const vh = Math.round(vv.height);
+      const layoutH = window.innerHeight;
+      const keyboard = Math.max(0, layoutH - vh);
+      root.style.setProperty("--app-vh", `${vh}px`);
+      root.style.setProperty("--keyboard-height", `${keyboard}px`);
+    };
+
+    updateVv();
+    vv.addEventListener("resize", updateVv);
+    vv.addEventListener("scroll", updateVv);
+    window.addEventListener("orientationchange", updateVv);
+    return () => {
+      vv.removeEventListener("resize", updateVv);
+      vv.removeEventListener("scroll", updateVv);
+      window.removeEventListener("orientationchange", updateVv);
+      root.style.removeProperty("--app-vh");
+      root.style.removeProperty("--keyboard-height");
+    };
+  }, []);
+
   const tabItems = useMemo(
     () => [
       { key: "home" as const, label: "首页", icon: <AppIcon /> },
@@ -275,7 +303,8 @@ export default function App() {
   }, [chatInput, chatMessages, chatSending]);
 
   const renderChat = () => (
-    <div className="flex h-[calc(100dvh-7rem)] flex-col px-3 pt-2 md:h-[calc(100dvh-8rem)]">
+    // 高度交给外层（基于 visualViewport 同步 var(--app-vh)），自身用 flex 自适应
+    <div className="flex h-full min-h-0 flex-col px-3 pt-2">
       <div className="mb-2 flex shrink-0 justify-end">
         <Button
           size="small"
@@ -633,10 +662,22 @@ export default function App() {
     return renderBasicConfig("rerank");
   };
 
+  // 聊天页内部已自带可滚动消息区与底部输入框，需要"占满中间区域且不再外层滚动"；
+  // 其他页面（首页/设置）按内容自然滚动即可。
+  const middleAreaClass =
+    tab === "chat"
+      ? "min-h-0 flex-1 overflow-hidden"
+      : "min-h-0 flex-1 overflow-y-auto overflow-x-hidden";
+
   return (
-    <div className="mx-auto flex min-h-[100dvh] w-full flex-col bg-background md:max-w-3xl md:border-x">
+    // 外层高度跟随可视区域：默认 100dvh，被 JS 写入的 --app-vh（visualViewport.height）覆盖；
+    // 这样在手机上软键盘弹起时整体收缩，TabBar 与聊天输入框始终可见、不被遮挡。
+    <div
+      className="mx-auto flex w-full flex-col bg-background md:max-w-3xl md:border-x"
+      style={{ height: "var(--app-vh, 100dvh)" }}
+    >
       <Navbar title={navTitle} leftArrow={showBack} onLeftClick={onBack} />
-      <div className="min-h-0 flex-1 pb-20">
+      <div className={middleAreaClass}>
         {tab === "home" ? renderHome() : null}
         {tab === "chat" ? renderChat() : null}
         {tab === "settings" ? renderSettings() : null}
@@ -649,16 +690,19 @@ export default function App() {
           </>
         ) : null}
       </div>
-      <div className="fixed inset-x-0 bottom-0 z-20 bg-background/95 backdrop-blur">
-        <div className="mx-auto w-full md:max-w-3xl md:border-x">
-          <TabBar value={tab} onChange={(v) => setTab(v as TabKey)}>
-            {tabItems.map((item) => (
-              <TabBarItem key={item.key} value={item.key} icon={item.icon}>
-                {item.label}
-              </TabBarItem>
-            ))}
-          </TabBar>
-        </div>
+      {/* 底部 TabBar 进入正常文档流，避免 fixed 在键盘弹起时与输入框重叠；
+          下方留出 iOS Home Indicator / Android 手势条安全区 */}
+      <div
+        className="shrink-0 bg-background/95 backdrop-blur"
+        style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+      >
+        <TabBar value={tab} onChange={(v) => setTab(v as TabKey)}>
+          {tabItems.map((item) => (
+            <TabBarItem key={item.key} value={item.key} icon={item.icon}>
+              {item.label}
+            </TabBarItem>
+          ))}
+        </TabBar>
       </div>
     </div>
   );

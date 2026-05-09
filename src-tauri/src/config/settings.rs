@@ -44,7 +44,11 @@ impl Default for Settings {
             port: 8765,
             data_root: PathBuf::from("./data"),
             config_file: None,
-            openai_api_key: None,
+            // 移动端打包后无 `.env` 可读，体验版直接内置默认 LLM API Key；
+            // 仍可被环境变量 `OPENAI_API_KEY` 或运行时密钥文件 `.pathy/openai_api_key` 覆盖。
+            openai_api_key: Some(
+                "sk-iaFh54aum3HJz4klEe7801A111544aDcA8542d845c523bD8".to_string(),
+            ),
             // LLM 默认走 Minimax（可被 `.env` / 环境变量 / `.pathy/llm.json` 覆盖）
             openai_base_url: Some("http://minimax.miniscoresdata.cn:3000/v1".to_string()),
             openai_model: "minimax-m2.5".to_string(),
